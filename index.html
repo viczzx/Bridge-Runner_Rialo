@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Rialo Bridge Runner Pro</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+    
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: linear-gradient(135deg, #0c0c0c 0%, #1a1a2e 50%, #16213e 100%);
+      font-family: 'Orbitron', monospace;
+      user-select: none;
+    }
+    
+    canvas {
+      display: block;
+      margin: 0 auto;
+      background: linear-gradient(to bottom, #0f3460 0%, #16537e 50%, #1a1a2e 100%);
+      box-shadow: 0 0 50px rgba(0, 255, 234, 0.3);
+      border-radius: 10px;
+    }
+    
+    #ui {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    
+    #score {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      font-size: 28px;
+      color: #00ffea;
+      font-weight: 700;
+      text-shadow: 0 0 10px rgba(0, 255, 234, 0.8);
+    }
+    
+    #highScore {
+      position: absolute;
+      top: 60px;
+      left: 20px;
+      font-size: 16px;
+      color: #ff6b35;
+      font-weight: 400;
+    }
+    
+    #speedMeter {
+      position: absolute;
+      top: 100px;
+      left: 20px;
+      font-size: 14px;
+      color: #fff;
+    }
+    
+    #instructions {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      font-size: 14px;
+      color: #fff;
+      text-align: right;
+      opacity: 0.8;
+    }
+    
+    #gameOver {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.9);
+      padding: 40px;
+      border-radius: 20px;
+      text-align: center;
+      border: 2px solid #00ffea;
+      box-shadow: 0 0 30px rgba(0, 255, 234, 0.5);
+      display: none;
+      pointer-events: all;
+    }
+    
+    #gameOver h2 {
+      color: #ff4444;
+      font-size: 32px;
+      margin: 0 0 20px 0;
+      text-shadow: 0 0 10px rgba(255, 68, 68, 0.8);
+    }
+    
+    #gameOver p {
+      color: #fff;
+      font-size: 18px;
+      margin: 10px 0;
+    }
+    
+    #gameOver .highlight {
+      color: #00ffea;
+      font-weight: 700;
+    }
+    
+    .particle {
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      background: #00ffea;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    
+    .custom-button {
+      pointer-events: all;
+      background-color: #00ffea;
+      color: #1a1a2e;
+      font-family: 'Orbitron', monospace;
+      border: none;
+      padding: 12px 24px;
+      margin-top: 20px;
+      font-size: 16px;
+      font-weight: bold;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background-color 0.3s, transform 0.1s;
+      box-shadow: 0 0 15px rgba(0, 255, 234, 0.5);
+    }
+    
+    .custom-button:hover {
+      background-color: #00e0d5;
+      transform: translateY(-2px);
+    }
+    
+    .custom-button:active {
+      transform: translateY(0);
+    }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <div id="score">Score: 0</div>
+    <div id="highScore">Best: 0</div>
+    <div id="speedMeter">Speed: Normal</div>
+    <div id="instructions">
+      SPACE / ↑ - Jump<br>
+      ENTER - Restart<br>
+      🔴 Red = Danger!<br>
+      ⭐ Obstacles = Speed Boost
+    </div>
+    <div id="gameOver">
+      <h2>GAME OVER</h2>
+      <p>Score: <span class="highlight" id="finalScore">0</span></p>
+      <p>Best: <span class="highlight" id="bestScore">0</span></p>
+      <p>Press ENTER to restart</p>
+      <button class="custom-button" id="restartButton">Restart</button>
+    </div>
+  </div>
+  <canvas id="gameCanvas" width="1000" height="500"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // Game constants
+    const GAME_CONFIG = {
+      bridgeMinWidth: 60,
+      bridgeMaxWidth: 200,
+      bridgeHeight: 25,
+      maxJumpDistance: 110,
+      obstacleSize: 20,
+      obstacleFrequency: 180,
+      groundLevel: 400,
+      playerSize: { width: 24, height: 36 },
+      physics: {
+        gravity: 0.65,
+        jumpPower: -15.5,
+        terminalVelocity: 12
+      },
+      redBridgeSlowdown: 0.3,
+      obstacleSpeedBoost: 1.8,
+      redBridgeBreakTime: 90
+    };
+    
+    let characterImage = null;
+    let backgroundImage = null;
+    
+    let gameState = {
+      player: null,
+      bridges: [],
+      obstacles: [],
+      particles: [],
+      score: 0,
+      highScore: parseInt(localStorage.getItem('bridgeRunnerHighScore')) || 0,
+      frameCount: 0,
+      gameOver: false,
+      baseGameSpeed: 4.5,
+      currentGameSpeed: 4.5,
+      camera: { x: 0, shake: 0 },
+      difficulty: 1,
+      onRedBridge: false,
+      redBridgeTimer: 0,
+      speedBoostTimer: 0,
+      speedBoostActive: false
+    };
+    
+    let audioContext;
+    
+    function initAudioContext() {
+      if (!audioContext) {
+        try {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        } catch (e) {
+          console.log('Audio context not supported');
+        }
+      }
+    }
+    
+    function playSound(frequency, duration, type = 'sine') {
+      if (!audioContext) return;
+      
+      try {
+        if (audioContext.state === 'suspended') {
+          audioContext.resume();
+        }
+        
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        oscillator.frequency.value = frequency;
+        oscillator.type = type;
+        
+        gainNode.gain.setValueAtTime(0.05, audioContext.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration);
+        
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + duration);
+      } catch (e) {
+        // Silently fail if audio doesn't work
+      }
+    }
+    
+    function loadGameAssets() {
+      const char = new Image();
+      char.onerror = function() {
+        console.log('Character image failed to load, using fallback');
+      };
+      char.onload = function() {
+        const canvas = document.createElement('canvas');
+        canvas.width = GAME_CONFIG.playerSize.width;
+        canvas.height = GAME_CONFIG.playerSize.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(char, 0, 0, GAME_CONFIG.playerSize.width, GAME_CONFIG.playerSize.height);
+        characterImage = canvas;
+      };
+      char.src = "char_2.png";
+    
+      const bg = new Image();
+      bg.onerror = function() {
+        console.log('Background image failed to load, using fallback');
+      };
+      bg.onload = function() {
+        backgroundImage = bg;
+      };
+      bg.src = "background.png";
+    }
+    
+    function drawCharacter(ctx, x, y, isGameOver, isJumping) {
+      if (characterImage) {
+        ctx.drawImage(characterImage, x, y);
+      } else {
+        ctx.fillStyle = '#7dd3c0';
+        ctx.fillRect(x, y, GAME_CONFIG.playerSize.width, GAME_CONFIG.playerSize.height);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(x + 4, y + 4, 3, 3);
+        ctx.fillRect(x + 17, y + 4, 3, 3);
+      }
+      if (isJumping) {
+        ctx.strokeStyle = '#00ffea';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x - 3, y - 3, GAME_CONFIG.playerSize.width + 6, GAME_CONFIG.playerSize.height + 6);
+      }
+    }
+    
+    function initGame() {
+      gameState.player = {
+        x: 120,
+        y: GAME_CONFIG.groundLevel - GAME_CONFIG.playerSize.height,
+        width: GAME_CONFIG.playerSize.width,
+        height: GAME_CONFIG.playerSize.height,
+        dy: 0,
+        onBridge: true,
+        isJumping: false,
+        trail: []
+      };
+    
+      gameState.bridges = [];
+      let bridgeX = 0;
+      gameState.bridges.push({
+        x: bridgeX,
+        y: GAME_CONFIG.groundLevel,
+        width: 300,
+        color: '#4CAF50',
+        type: 'safe',
+        breakTimer: 0
+      });
+      bridgeX += 300;
+    
+      for (let i = 0; i < 20; i++) {
+        const gap = Math.random() * GAME_CONFIG.maxJumpDistance;
+        bridgeX += gap;
+        const width = Math.random() * (GAME_CONFIG.bridgeMaxWidth - GAME_CONFIG.bridgeMinWidth) + GAME_CONFIG.bridgeMinWidth;
+        const bridgeType = Math.random() < 0.2 ? 'danger' : 'safe';
+        gameState.bridges.push({
+          x: bridgeX,
+          y: GAME_CONFIG.groundLevel,
+          width: width,
+          color: bridgeType === 'danger' ? '#FF3B3B' : '#4CAF50',
+          type: bridgeType,
+          breakTimer: 0
+        });
+        bridgeX += width;
+      }
+    
+      gameState.obstacles = [];
+      gameState.particles = [];
+      gameState.score = 0;
+      gameState.frameCount = 0;
+      gameState.gameOver = false;
+      gameState.baseGameSpeed = 4.5;
+      gameState.currentGameSpeed = 4.5;
+      gameState.camera = { x: 0, shake: 0 };
+      gameState.difficulty = 1;
+      gameState.onRedBridge = false;
+      gameState.redBridgeTimer = 0;
+      gameState.speedBoostTimer = 0;
+      gameState.speedBoostActive = false;
+    
+      updateUI();
+      document.getElementById('gameOver').style.display = 'none';
+    }
+    
+    function updateUI() {
+      document.getElementById('score').textContent = `Score: ${gameState.score}`;
+      document.getElementById('highScore').textContent = `Best: ${gameState.highScore}`;
+      
+      let speedText = "Normal";
+      if (gameState.speedBoostActive) {
+        speedText = "BOOST!";
+      } else if (gameState.onRedBridge) {
+        speedText = "DANGER!";
+      }
+      document.getElementById('speedMeter').textContent = `Speed: ${speedText}`;
+    }
+    
+    function createParticle(x, y, color = '#00ffea') {
+      gameState.particles.push({
+        x: x,
+        y: y,
+        dx: (Math.random() - 0.5) * 8,
+        dy: Math.random() * -5 - 2,
+        life: 30,
+        maxLife: 30,
+        color: color
+      });
+    }
+    
+    function handleInput() {
+      document.addEventListener('keydown', (e) => {
+        initAudioContext(); // Initialize audio on first user interaction
+        
+        if ((e.code === 'Space' || e.code === 'ArrowUp') && !gameState.gameOver) {
+          e.preventDefault();
+          if (gameState.player.onBridge && !gameState.player.isJumping) {
+            gameState.player.dy = GAME_CONFIG.physics.jumpPower;
+            gameState.player.onBridge = false;
+            gameState.player.isJumping = true;
+            playSound(400, 0.1, 'square');
+            for (let i = 0; i < 3; i++) {
+              createParticle(gameState.player.x + gameState.player.width / 2, gameState.player.y + gameState.player.height);
+            }
+          }
+        }
+        
+        if (gameState.gameOver && e.code === 'Enter') {
+          initGame();
+        }
+      });
+      
+      // Fixed button click handler
+      document.getElementById('restartButton').addEventListener('click', (e) => {
+        initAudioContext(); // Initialize audio on first user interaction
+        if (gameState.gameOver) {
+          initGame();
+        }
+      });
+    }
+    
+    function updatePlayer() {
+      const player = gameState.player;
+      player.dy += GAME_CONFIG.physics.gravity;
+      player.dy = Math.min(player.dy, GAME_CONFIG.physics.terminalVelocity);
+      player.y += player.dy;
+    
+      player.trail.unshift({ x: player.x + player.width / 2, y: player.y + player.height / 2 });
+      if (player.trail.length > 8) player.trail.pop();
+    
+      let wasOnBridge = player.onBridge;
+      player.onBridge = false;
+      gameState.onRedBridge = false;
+    
+      for (let bridge of gameState.bridges) {
+        if (player.x + player.width > bridge.x && player.x < bridge.x + bridge.width && player.dy >= 0 && player.y + player.height >= bridge.y - 8 && player.y + player.height <= bridge.y + GAME_CONFIG.bridgeHeight + 8) {
+          player.y = bridge.y - player.height;
+          player.dy = 0;
+          player.onBridge = true;
+          player.isJumping = false;
+          if (bridge.type === 'danger') {
+            gameState.onRedBridge = true;
+            bridge.breakTimer++;
+            if (bridge.breakTimer > GAME_CONFIG.redBridgeBreakTime) {
+              endGame('RED BRIDGE COLLAPSED!');
+              return;
+            }
+          } else {
+            bridge.breakTimer = 0;
+          }
+          if (!wasOnBridge) {
+            for (let i = 0; i < 2; i++) {
+              createParticle(player.x + Math.random() * player.width, bridge.y, bridge.color);
+            }
+          }
+          break;
+        }
+      }
+    
+      if (player.y + player.height > GAME_CONFIG.groundLevel + 100 && !player.onBridge) {
+        endGame('FELL INTO THE VOID!');
+      }
+      if (player.y < -player.height) {
+        endGame('FLEW TOO HIGH!');
+      }
+    }
+    
+    function updateGameSpeed() {
+      let targetSpeed = gameState.baseGameSpeed;
+      if (gameState.speedBoostActive) {
+        targetSpeed *= GAME_CONFIG.obstacleSpeedBoost;
+        gameState.speedBoostTimer--;
+        if (gameState.speedBoostTimer <= 0) {
+          gameState.speedBoostActive = false;
+        }
+      }
+      if (gameState.onRedBridge) {
+        targetSpeed *= GAME_CONFIG.redBridgeSlowdown;
+        if (gameState.speedBoostActive) {
+          targetSpeed *= 0.5;
+        }
+      }
+      gameState.currentGameSpeed = targetSpeed;
+      updateUI();
+    }
+    
+    function updateWorld() {
+      updateGameSpeed();
+      gameState.bridges.forEach(b => b.x -= gameState.currentGameSpeed);
+      gameState.obstacles.forEach(o => o.x -= gameState.currentGameSpeed);
+    
+      if (gameState.camera.shake > 0) {
+        gameState.camera.shake *= 0.9;
+      }
+    
+      if (gameState.bridges[0].x + gameState.bridges[0].width < -200) {
+        gameState.bridges.shift();
+        gameState.score++;
+        playSound(600, 0.05);
+        const lastBridge = gameState.bridges[gameState.bridges.length - 1];
+        const gap = Math.random() * (GAME_CONFIG.maxJumpDistance * gameState.difficulty);
+        const newX = lastBridge.x + lastBridge.width + gap;
+        const newWidth = Math.random() * (GAME_CONFIG.bridgeMaxWidth - GAME_CONFIG.bridgeMinWidth) + GAME_CONFIG.bridgeMinWidth;
+        const bridgeType = Math.random() < (0.15 + gameState.score * 0.005) ? 'danger' : 'safe';
+        gameState.bridges.push({
+          x: newX,
+          y: GAME_CONFIG.groundLevel,
+          width: newWidth,
+          color: bridgeType === 'danger' ? '#FF3B3B' : '#4CAF50',
+          type: bridgeType,
+          breakTimer: 0
+        });
+        if (gameState.score % 5 === 0) {
+          gameState.baseGameSpeed += 0.2;
+          gameState.difficulty = Math.min(gameState.difficulty + 0.1, 1.8);
+        }
+        updateUI();
+      }
+    
+      if (gameState.frameCount % GAME_CONFIG.obstacleFrequency === 0 && gameState.score > 3) {
+        for (let bridge of gameState.bridges) {
+          if (bridge.x > gameState.player.x + 200 && bridge.x < gameState.player.x + 500 && Math.random() < 0.25) {
+            gameState.obstacles.push({
+              x: bridge.x + Math.random() * (bridge.width - GAME_CONFIG.obstacleSize),
+              y: bridge.y - GAME_CONFIG.obstacleSize,
+              width: GAME_CONFIG.obstacleSize,
+              height: GAME_CONFIG.obstacleSize,
+              rotation: 0
+            });
+            break;
+          }
+        }
+      }
+    
+      gameState.obstacles.forEach(o => o.rotation += 0.1);
+      gameState.obstacles = gameState.obstacles.filter(o => o.x + o.width > -100);
+    
+      for (let i = gameState.obstacles.length - 1; i >= 0; i--) {
+        const obstacle = gameState.obstacles[i];
+        if (gameState.player.x < obstacle.x + obstacle.width - 2 && gameState.player.x + gameState.player.width > obstacle.x + 2 && gameState.player.y < obstacle.y + obstacle.height - 2 && gameState.player.y + gameState.player.height > obstacle.y + 2) {
+          gameState.obstacles.splice(i, 1);
+          gameState.speedBoostActive = true;
+          gameState.speedBoostTimer = 120;
+          playSound(800, 0.2, 'sawtooth');
+          for (let j = 0; j < 8; j++) {
+            createParticle(obstacle.x + obstacle.width/2, obstacle.y + obstacle.height/2, '#ffff00');
+          }
+          break;
+        }
+      }
+    }
+    
+    function updateParticles() {
+      gameState.particles.forEach(p => {
+        p.x += p.dx;
+        p.y += p.dy;
+        p.dy += 0.2;
+        p.life--;
+      });
+      gameState.particles = gameState.particles.filter(p => p.life > 0);
+    }
+    
+    function endGame(reason) {
+      gameState.gameOver = true;
+      gameState.camera.shake = 10;
+      playSound(150, 0.5, 'sawtooth');
+      if (gameState.score > gameState.highScore) {
+        gameState.highScore = gameState.score;
+        try {
+          localStorage.setItem('bridgeRunnerHighScore', gameState.highScore);
+        } catch (e) {
+          console.log('LocalStorage not available');
+        }
+        playSound(800, 0.3);
+      }
+      document.getElementById('finalScore').textContent = gameState.score;
+      document.getElementById('bestScore').textContent = gameState.highScore;
+      document.getElementById('gameOver').style.display = 'block';
+      for (let i = 0; i < 15; i++) {
+        createParticle(gameState.player.x + gameState.player.width / 2, gameState.player.y + gameState.player.height / 2, ['#ff4444', '#ff8800', '#ffff00'][Math.floor(Math.random() * 3)]);
+      }
+    }
+    
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const shakeX = (Math.random() - 0.5) * gameState.camera.shake;
+      const shakeY = (Math.random() - 0.5) * gameState.camera.shake;
+      ctx.save();
+      ctx.translate(shakeX, shakeY);
+    
+      drawBackground();
+      gameState.bridges.forEach(drawBridge);
+      gameState.obstacles.forEach(drawObstacle);
+      gameState.particles.forEach(drawParticle);
+      drawPlayer();
+      ctx.restore();
+    }
+    
+    function drawBackground() {
+      if (backgroundImage) {
+        ctx.drawImage(backgroundImage, 0, 0, canvas.width, canvas.height);
+      }
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    
+    function drawBridge(bridge) {
+      if (bridge.type === 'danger') {
+        const intensity = bridge.breakTimer / GAME_CONFIG.redBridgeBreakTime;
+        ctx.shadowColor = '#FF3B3B';
+        ctx.shadowBlur = 10 + intensity * 20;
+        const pulse = Math.sin(gameState.frameCount * 0.3 + intensity * 5) * 0.5 + 0.5;
+        ctx.fillStyle = `rgba(255, 59, 59, ${0.8 + pulse * 0.2})`;
+      } else {
+        ctx.shadowColor = '#4CAF50';
+        ctx.shadowBlur = 5;
+        ctx.fillStyle = bridge.color;
+      }
+      ctx.fillRect(bridge.x, bridge.y, bridge.width, GAME_CONFIG.bridgeHeight);
+      ctx.shadowColor = 'transparent';
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+      ctx.fillRect(bridge.x, bridge.y, bridge.width, 3);
+      if (bridge.type === 'danger') {
+        ctx.fillStyle = `rgba(255, 255, 255, ${bridge.breakTimer / GAME_CONFIG.redBridgeBreakTime})`;
+        for (let i = 0; i < bridge.width; i += 10) {
+          ctx.fillRect(bridge.x + i, bridge.y, 5, GAME_CONFIG.bridgeHeight);
+        }
+      }
+    }
+    
+    function drawObstacle(obstacle) {
+      ctx.save();
+      ctx.translate(obstacle.x + obstacle.width / 2, obstacle.y + obstacle.height / 2);
+      ctx.rotate(obstacle.rotation);
+      ctx.fillStyle = '#ffc107';
+      ctx.shadowColor = '#ffc107';
+      ctx.shadowBlur = 10;
+      ctx.fillRect(-obstacle.width / 2, -obstacle.height / 2, obstacle.width, obstacle.height);
+      ctx.restore();
+    }
+    
+    function drawParticle(p) {
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = p.life / p.maxLife;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    
+    function drawPlayer() {
+      for (let i = 0; i < gameState.player.trail.length; i++) {
+        const trailPart = gameState.player.trail[i];
+        const alpha = (1 - i / gameState.player.trail.length) * 0.5;
+        ctx.fillStyle = `rgba(0, 255, 234, ${alpha})`;
+        ctx.beginPath();
+        ctx.arc(trailPart.x, trailPart.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      drawCharacter(ctx, gameState.player.x, gameState.player.y, gameState.gameOver, gameState.player.isJumping);
+    }
+    
+    function gameLoop() {
+      if (!gameState.gameOver) {
+        updatePlayer();
+        updateWorld();
+        updateParticles();
+        gameState.frameCount++;
+      }
+      render();
+      requestAnimationFrame(gameLoop);
+    }
+    
+    // Initialize the game
+    loadGameAssets();
+    initGame();
+    handleInput();
+    gameLoop();
+  </script>
+</body>
+</html>
